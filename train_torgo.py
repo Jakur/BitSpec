@@ -305,13 +305,8 @@ class WhisperConsistencyTrainer(Seq2SeqTrainer):
         inputs: dict[str, torch.Tensor | Any],
         num_items_in_batch: torch.Tensor | int | None = None,
     ) -> torch.Tensor:
-        try:
-            val = super().training_step(model, inputs, num_items_in_batch)
-            return val
-        except RuntimeError:
-            print("Runtime Error Encountered! Setting loss to 0...")
-            device = next(iter(inputs.values())).device
-            return torch.tensor(0.0).to(device=device)
+        val = super().training_step(model, inputs, num_items_in_batch)
+        return val
 
     def log_scalar_dict(self, data):
         if hasattr(self, "tb_writer") and self.tb_writer is not None:
@@ -331,8 +326,8 @@ class WhisperConsistencyTrainer(Seq2SeqTrainer):
             F.normalize(h2, dim=-1),
             dim=-1,
         )
-        log = torch.log(cos.clamp(0.01, 2.0))
-        return log.mean()
+        # log = torch.log(cos.clamp(0.01, 2.0))
+        return cos.mean()
         # return cos
 
         # h1 = F.normalize(h1, dim=-1)
@@ -422,9 +417,8 @@ class WhisperConsistencyTrainer(Seq2SeqTrainer):
         # -----------------------------------------------------
         # Consistency objective
         # -----------------------------------------------------
-
-        h1 = outputs1.decoder_hidden_states[self.consistency_layer]
-        h2 = outputs2.decoder_hidden_states[self.consistency_layer]
+        h1 = outputs1.encoder_hidden_states[self.consistency_layer]
+        h2 = outputs2.encoder_hidden_states[self.consistency_layer]
         # logits1 = outputs1.logits
         # logits2 = outputs2.logits # Will these always have the same shape? I don't think so. 
         # assert(logits1.size() == logits2.size())
@@ -638,7 +632,7 @@ def run_training(
         processing_class=processor,
         # tokenizer=processor.feature_extractor,
         callbacks=callbacks,
-        consistency_weight=0.5,
+        consistency_weight=10.0,
         consistency_layer=-2,
     )
     # TODO move and clean this up 
