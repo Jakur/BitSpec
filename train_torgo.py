@@ -338,6 +338,8 @@ class WhisperConsistencyTrainer(Seq2SeqTrainer):
     def mask_fn(self, input_features, bits=8):
         bs = input_features.size(0)
         channels = input_features.size(1)
+        # shift = numpy_rng.integers(low=0, high=bits, size=(bs, channels // bits), dtype=np.uint8)
+        # result = np.power((2 * np.ones_like(shift)), shift) # This sets a single bit always 
         result = numpy_rng.integers(low=1, high=(1<<bits) - 1, size=(bs, channels // bits), dtype=np.uint8)
         mask = generate_mask(result, input_features, bits)
         complement = torch.logical_not(mask).to(mask.device)
@@ -591,7 +593,17 @@ def run_training(
                 val = int(sp) if sp.isdigit() else 0
                 if val >= 24:
                     p.requires_grad_(True)
+            elif "decoder" in n:
+                p.requires_grad_(True)
         # print(p.size())
+    else:
+        # Whisper Small 
+        for n, p in model.named_parameters():
+            p.requires_grad_(False)
+            sp = n.split(".")[3] 
+            val = int(sp) if sp.isdigit() else 0
+            if val >= 6:
+                p.requires_grad_(True)
 
     training_args = Seq2SeqTrainingArguments(
         output_dir=output_dir,
@@ -617,12 +629,12 @@ def run_training(
         push_to_hub=False,
         remove_unused_columns=False,
         label_names=["labels"],
-        eval_on_start=False,
+        eval_on_start=True,
         resume_from_checkpoint=checkpoint,
     )
 
     callbacks = [SetEpochCallback()] if use_augmentation else []
-    trainer = WhisperConsistencyTrainer(
+    trainer = SudoTrainer(
         args=training_args,
         model=model,
         train_dataset=train_ds,
@@ -632,8 +644,8 @@ def run_training(
         processing_class=processor,
         # tokenizer=processor.feature_extractor,
         callbacks=callbacks,
-        consistency_weight=10.0,
-        consistency_layer=-2,
+        # consistency_weight=10.0,
+        # consistency_layer=-1,
     )
     # TODO move and clean this up 
     # Feature importance experiments
@@ -703,6 +715,7 @@ def run_training(
     trainer.train(resume_from_checkpoint=False) 
     trainer.save_model(output_dir)
     processor.save_pretrained(output_dir)
+    print(f"Best WER achieved: {trainer.state.best_metric}")
     print(f"Model and processor saved to {output_dir}")
 
 
