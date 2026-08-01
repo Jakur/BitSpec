@@ -499,6 +499,7 @@ def run_training(
     learning_rate: float = 1e-5,
     num_train_epochs: int = 3,
     use_lora: bool = False,
+    eval_on_start=False,
     checkpoint = None,
     **kwargs,
 ) -> None:
@@ -629,7 +630,7 @@ def run_training(
         push_to_hub=False,
         remove_unused_columns=False,
         label_names=["labels"],
-        eval_on_start=True,
+        eval_on_start=eval_on_start,
         resume_from_checkpoint=checkpoint,
     )
 
@@ -750,6 +751,7 @@ def main():
     parser.add_argument("--train_ratio", type=float, default=0.8)
     parser.add_argument("--val_ratio", type=float, default=0.1)
     parser.add_argument("--test_ratio", type=float, default=0.1)
+    parser.add_argument("--val_librispeech", action="store_true")
     parser.add_argument("--loso_test_speaker", type=str, default="M01", help="Speaker ID for test set.")
     parser.add_argument("--loso_val_speaker", type=str, default="M05", help="Speaker ID for validation set.")
     parser.add_argument("--short_word_max_words", type=int, default=2, help="The length of utterances.")
@@ -771,13 +773,16 @@ def main():
     # print(model)
     # assert(False)
     processor = WhisperProcessor.from_pretrained(args.model_name, language=args.language, task=args.task)
+    eval_on_start = False
     # dataset Deduplication 
     
     if args.phrase_split:
         train, val = partition_torgo_on_phrase(processor.tokenizer, val_count=8)
     else:
         train, val = get_torgo(args.loso_val_speaker, args.loso_test_speaker, processor.tokenizer)
-    # val = get_libri_test(processor.tokenizer)
+    if args.val_librispeech:
+        val = get_libri_test(processor.tokenizer)
+        eval_on_start = True
 
     transform_fn = Compose([
         AddGaussianSNR(min_snr_db=args.augment_snr_db_min, max_snr_db=args.augment_snr_db_max, p=0.5),
@@ -834,6 +839,7 @@ def main():
         augment_rir_dir=args.augment_rir_dir or None,
         seed=args.seed,
         checkpoint=checkpoint,
+        eval_on_start=eval_on_start
     )
 
 
