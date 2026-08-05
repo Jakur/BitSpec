@@ -500,6 +500,7 @@ def run_training(
     num_train_epochs: int = 3,
     use_lora: bool = False,
     eval_on_start=False,
+    eval_only=False,
     checkpoint = None,
     **kwargs,
 ) -> None:
@@ -713,6 +714,14 @@ def run_training(
         assert(False)
     # Training 
     # Only set resume to true if both 1) You want optimization state 2) You are using the same output directory as checkpoint directory
+    if eval_only:
+        train_metrics = trainer.evaluate(eval_dataset=train_ds)
+        print("Sentence Level Metrics:")
+        print(train_metrics)
+        val_metrics = trainer.evaluate(eval_dataset=val_ds)
+        print("\nWord Level Metrics:")
+        print(val_metrics)
+        return
     trainer.train(resume_from_checkpoint=False) 
     trainer.save_model(output_dir)
     processor.save_pretrained(output_dir)
@@ -764,6 +773,7 @@ def main():
     parser.add_argument("--output_dir", type=str, default="results/train/new_ds11")
     parser.add_argument("--split_indices", type=str, default="results/data_split/split_indices.json", help="Save train/val/test indices.")
     parser.add_argument("--local_window_size", type=int, default=16, help="Size of local sliding window (power of 2)")
+    parser.add_argument("--eval_only", action="store_true", help="Sentence and word level evaluation only")
     args = parser.parse_args()
     global WINDOW_SIZE
     WINDOW_SIZE = args.local_window_size
@@ -773,13 +783,13 @@ def main():
     # print(model)
     # assert(False)
     processor = WhisperProcessor.from_pretrained(args.model_name, language=args.language, task=args.task)
-    eval_on_start = False
+    eval_on_start = args.eval_only
     # dataset Deduplication 
     
     if args.phrase_split:
         train, val = partition_torgo_on_phrase(processor.tokenizer, val_count=8)
     else:
-        train, val = get_torgo(args.loso_val_speaker, args.loso_test_speaker, processor.tokenizer)
+        train, val = get_torgo(args.loso_val_speaker, args.loso_test_speaker, processor.tokenizer, evaluate=args.eval_only)
     if args.val_librispeech:
         val = get_libri_test(processor.tokenizer)
         eval_on_start = True
@@ -803,7 +813,7 @@ def main():
             assert(False)
         return batch
     
-    if args.use_augmentation:
+    if args.use_augmentation and not args.eval_only:
         train.set_transform(transform=transform)
     
     checkpoint = None
@@ -839,7 +849,8 @@ def main():
         augment_rir_dir=args.augment_rir_dir or None,
         seed=args.seed,
         checkpoint=checkpoint,
-        eval_on_start=eval_on_start
+        eval_on_start=eval_on_start,
+        eval_only=args.eval_only,
     )
 
 

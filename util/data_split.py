@@ -1,10 +1,11 @@
 from collections import defaultdict
 from typing import Dict, List, Tuple
 import numpy as np
+import polars as pl
 from datasets import Dataset, DatasetDict, load_dataset
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 
-def get_torgo(val_speaker, test_speaker, tokenizer):
+def get_torgo(val_speaker, test_speaker, tokenizer, evaluate=False):
     dataset = load_dataset("extraordinarylab/torgo")["test"]
     if len(dataset.cache_files) > 32: 
         dataset.cleanup_cache_files() # Only cleans up parquet and not downloads 
@@ -13,8 +14,9 @@ def get_torgo(val_speaker, test_speaker, tokenizer):
     dataset = dataset.filter(lambda x: x["length"] <= 30, num_proc=4) # Manually confirmed the 2 samples above this are garbage
     speaker_column = "speaker"
     text_column = "text"
-    train_ds = dataset.filter(lambda x: x[speaker_column] != val_speaker and x[speaker_column] != test_speaker, num_proc=4)
-    val_ds = dataset.filter(lambda x: x[speaker_column] == val_speaker, num_proc=4)
+    df = dataset.select_columns(["text", speaker_column]).to_polars().with_row_index()
+    df = df.with_columns(pl.col("text").str.strip_chars_end(" ").str.split(" ").list.len().alias("words"))
+
     def convert(ds, num_shards=32, iterable=False):
         if iterable:
             ds = ds.to_iterable_dataset(num_shards=num_shards)
@@ -22,8 +24,20 @@ def get_torgo(val_speaker, test_speaker, tokenizer):
             lambda x: {"input_features": x["audio"].get_all_samples().data.squeeze(), "labels": tokenizer(text=x[text_column]) }).remove_columns(
                 ["audio", "speech_status", "microphone", "length"])
     
-    train = convert(train_ds, iterable=False)
-    val = convert(val_ds, num_shards=16, iterable=False)
+    dataset = convert(dataset)
+    if evaluate:
+        # Break validation set into sentence-level and word-level
+        validation = df.filter(pl.col(speaker_column) == val_speaker)
+        val_word = validation.filter(pl.col("words") <= 1)
+        val_sentence = validation.filter(pl.col("words") > 1)
+        train_df = val_sentence
+        val_df = val_word
+    else:
+        train_df = df.filter((pl.col(speaker_column) != val_speaker) & (pl.col(speaker_column) != test_speaker))
+        val_df = df.filter(pl.col(speaker_column) == val_speaker)
+
+    train = dataset.select(train_df.get_column("index"))
+    val = dataset.select(val_df.get_column("index"))
     return train, val
 
 def partition_torgo_on_phrase(tokenizer, val_count=10):
