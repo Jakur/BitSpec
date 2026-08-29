@@ -599,12 +599,15 @@ def run_training(
                 p.requires_grad_(True)
         # print(p.size())
     else:
-        # Whisper Small 
+        threshold = 3
+        if "small" in model_name:
+            threshold = 6
+        print(f"Freezing Transformer blocks < {threshold}")
         for n, p in model.named_parameters():
             p.requires_grad_(False)
             sp = n.split(".")[3] 
             val = int(sp) if sp.isdigit() else 0
-            if val >= 6:
+            if val >= threshold:
                 p.requires_grad_(True)
 
     training_args = Seq2SeqTrainingArguments(
@@ -726,13 +729,15 @@ def run_training(
     trainer.save_model(output_dir)
     processor.save_pretrained(output_dir)
     print(f"Best WER achieved: {trainer.state.best_metric}")
+    with open(output_dir + "/best.txt", "w") as f:
+        f.write(f"Best WER achieved: {trainer.state.best_metric}")
     print(f"Model and processor saved to {output_dir}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     # model settings
-    parser.add_argument("--model_name", type=str, default="openai/whisper-small", choices=["openai/whisper-small", "distil-whisper/distil-large-v3"])
+    parser.add_argument("--model_name", type=str, default="openai/whisper-small", choices=["openai/whisper-small", "openai/whisper-base", "distil-whisper/distil-large-v3"])
     parser.add_argument("--checkpoint", type=str, default="", help="Checkpoint path")
     parser.add_argument("--language", type=str, default="en")
     parser.add_argument("--task", type=str, default="transcribe")
