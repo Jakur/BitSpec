@@ -567,17 +567,29 @@ def run_training(
         model.generation_config.language = language
         model.generation_config.task = task
 
-    # if use_lora:
-    #     from peft import LoraConfig, get_peft_model
-    #     lora_config = LoraConfig(
-    #         r=kwargs.get("lora_r", 16),
-    #         lora_alpha=kwargs.get("lora_alpha", 32),
-    #         target_modules=["q_proj", "k_proj"],
-    #         lora_dropout=kwargs.get("lora_dropout", 0.05),
-    #         bias="none",
-    #     )
-    #     model = get_peft_model(model, lora_config)
-    #     model.print_trainable_parameters()
+    if use_lora:
+        from peft import LoraConfig, get_peft_model
+        # All linear corresponds to qlora https://arxiv.org/pdf/2305.14314 
+        lora_config = LoraConfig(
+            r=kwargs.get("lora_r", 16),
+            lora_alpha=kwargs.get("lora_alpha", 32),
+            target_modules="all-linear",
+            # exclude_modules="^"
+            # layers_to_transform=list(range(6, 12)),
+            lora_dropout=kwargs.get("lora_dropout", 0.05),
+            bias="none",
+        )
+        # Isn't this abnormal? Wouldn't it normally be q and v? 
+        # See https://arxiv.org/pdf/2305.14314 
+        # lora_config = LoraConfig(
+        #     r=kwargs.get("lora_r", 16),
+        #     lora_alpha=kwargs.get("lora_alpha", 32),
+        #     target_modules=["q_proj", "k_proj"],
+        #     lora_dropout=kwargs.get("lora_dropout", 0.05),
+        #     bias="none",
+        # )
+        model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
 
     use_augmentation = kwargs.get("use_augmentation", False)
     
@@ -586,29 +598,39 @@ def run_training(
         processor=processor,
         decoder_start_token_id=model.config.decoder_start_token_id,
     ) 
-
-    if distill_whisper:
-        for n, p in model.named_parameters():
-            p.requires_grad_(False)
-            if "encoder" in n:
-                sp = n.split(".")[3]
-                val = int(sp) if sp.isdigit() else 0
-                if val >= 24:
+    if not use_lora:
+        total_params = 0
+        trainable_params = 0
+        if distill_whisper:
+            for n, p in model.named_parameters():
+                p.requires_grad_(False)
+                total_params += p.numel()
+                if "encoder" in n:
+                    sp = n.split(".")[3]
+                    val = int(sp) if sp.isdigit() else 0
+                    if val >= 24:
+                        trainable_params += p.numel()
+                        p.requires_grad_(True)
+                elif "decoder" in n:
+                    trainable_params += p.numel()
                     p.requires_grad_(True)
-            elif "decoder" in n:
-                p.requires_grad_(True)
-        # print(p.size())
-    else:
-        threshold = 3
-        if "small" in model_name:
-            threshold = 6
-        print(f"Freezing Transformer blocks < {threshold}")
-        for n, p in model.named_parameters():
-            p.requires_grad_(False)
-            sp = n.split(".")[3] 
-            val = int(sp) if sp.isdigit() else 0
-            if val >= threshold:
-                p.requires_grad_(True)
+            # print(p.size())
+        else:
+            threshold = 3
+            if "small" in model_name:
+                threshold = 6
+            print(f"Freezing Transformer blocks < {threshold}")
+            for n, p in model.named_parameters():
+                print(n)
+                p.requires_grad_(False)
+                total_params += p.numel()
+                sp = n.split(".")[3] 
+                val = int(sp) if sp.isdigit() else 0
+                if val >= threshold:
+                    trainable_params += p.numel()
+                    p.requires_grad_(True)
+        pct = 100.0 * trainable_params / total_params
+        print(f"Trainable Parameters: {pct:.2f}%")
 
     training_args = Seq2SeqTrainingArguments(
         output_dir=output_dir,
