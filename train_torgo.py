@@ -9,7 +9,7 @@ import evaluate
 import argparse
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Union, Optional
 from datasets import Dataset
 from torch.utils.data import DataLoader
 from transformers import (
@@ -24,6 +24,7 @@ from util.data_split import get_torgo, get_libri_test, partition_torgo_on_phrase
 from util.augment import SetEpochCallback, build_subsets
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 from audiomentations import Compose, AddGaussianNoise, TimeStretch, PitchShift, Shift, RepeatPart, AddGaussianSNR, TimeMask
+from spec_augment import SpecAugment, LIBRISPEECH_BASIC
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -32,6 +33,7 @@ wer_metric = evaluate.load("wer")
 cer_metric = evaluate.load("cer")
 WINDOW_SIZE = 16 # This is modified by main according to input arguments
 numpy_rng = np.random.default_rng()
+SPECTRAL_AUG = "none"
 
 @dataclass
 # Pads audio features and label sequences so each batch has the same shape
@@ -465,7 +467,11 @@ class SudoTrainer(Seq2SeqTrainer):
         # groups = [6, 10, 8, 8, 8, 8, 8, 8, 8, 8, 10, 10, 14, 14]
         # inputs["input_features"] = importance_mask(inputs["input_features"])
         # inputs["input_features"] = asymmetric_channel_shuffle(inputs["input_features"], groups)
-        inputs["input_features"] = adv_bitwise_channel_mask(inputs["input_features"], bits=4)
+        if SPECTRAL_AUG == "custom":
+            inputs["input_features"] = adv_bitwise_channel_mask(inputs["input_features"], bits=4)
+        elif SPECTRAL_AUG == "specaugment":
+            aug = SpecAugment(LIBRISPEECH_BASIC) # This holds little state, so reconstructing it is ugly but fine
+            inputs["input_features"] = aug(inputs["input_features"])
         # inputs["input_features"] = local_channel_shuffle(inputs["input_features"], window_size=WINDOW_SIZE)
         val = super().training_step(model, inputs, num_items_in_batch)
         # print(val)
@@ -502,6 +508,7 @@ def run_training(
     eval_on_start=False,
     eval_only=False,
     checkpoint = None,
+    spectral_aug="custom",
     **kwargs,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
@@ -536,7 +543,7 @@ def run_training(
 
     if distill_whisper:
         name = model_name 
-        if checkpoint is not None:
+        if checkpoint is not None and not use_lora:
             name = checkpoint
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             name, low_cpu_mem_usage=False, use_safetensors=True
@@ -544,7 +551,7 @@ def run_training(
         model.to(device).float()
     else:
         name = model_name 
-        if checkpoint is not None:
+        if checkpoint is not None and not use_lora:
             name = checkpoint
         model = WhisperForConditionalGeneration.from_pretrained(
             name,
@@ -574,6 +581,7 @@ def run_training(
             r=kwargs.get("lora_r", 16),
             lora_alpha=kwargs.get("lora_alpha", 32),
             target_modules="all-linear",
+            # target_modules=["q_proj", "v_proj", "fc1", "fc2"],
             # exclude_modules="^"
             # layers_to_transform=list(range(6, 12)),
             lora_dropout=kwargs.get("lora_dropout", 0.05),
@@ -621,7 +629,7 @@ def run_training(
                 threshold = 6
             print(f"Freezing Transformer blocks < {threshold}")
             for n, p in model.named_parameters():
-                print(n)
+                # print(n)
                 p.requires_grad_(False)
                 total_params += p.numel()
                 sp = n.split(".")[3] 
@@ -792,7 +800,8 @@ def main():
     parser.add_argument("--loso_val_speaker", type=str, default="M05", help="Speaker ID for validation set.")
     parser.add_argument("--short_word_max_words", type=int, default=2, help="The length of utterances.")
     parser.add_argument("--phrase_split", action="store_true", help="Split by phrase instead of by speaker")
-    parser.add_argument("--use_augmentation", action="store_true", help="Apply audio augmentation on train.")
+    parser.add_argument("--use_augmentation", action="store_true", help="Apply waveform audio augmentation on train.")
+    parser.add_argument("--spectral_aug", type=str, choices=("none", "custom", "specaugment"), default="custom", help="Apply spectral augmentation during training")
     parser.add_argument("--augment_snr_db_min", type=float, default=5.0, help="Min SNR (dB) for noise augmentation.")
     parser.add_argument("--augment_snr_db_max", type=float, default=20.0, help="Max SNR (dB) for noise augmentation.")
     parser.add_argument("--augment_rir_dir", type=str, default="data/RIR/RIRS_NOISES/real_rirs_isotropic_noises", help="Directory containing real RIR files.")
@@ -846,6 +855,8 @@ def main():
     checkpoint = None
     if args.checkpoint != "":
         checkpoint = args.checkpoint
+    global SPECTRAL_AUG
+    SPECTRAL_AUG = args.spectral_aug
 
     # training
     run_training(
