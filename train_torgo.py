@@ -508,7 +508,7 @@ def run_training(
     eval_on_start=False,
     eval_only=False,
     checkpoint = None,
-    spectral_aug="custom",
+    evaluation="torgo",
     **kwargs,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
@@ -565,7 +565,8 @@ def run_training(
             model.generation_config.task = task
 
     # model.config.apply_spec_augment = True
-    print(model)
+    if not eval_only:
+        print(model)
 
     # processor = WhisperProcessor.from_pretrained("distil-whisper/distil-small.en")
     # processor = AutoProcessor.from_pretrained(model_id)
@@ -574,7 +575,7 @@ def run_training(
         model.generation_config.language = language
         model.generation_config.task = task
 
-    if use_lora:
+    if use_lora and not eval_only:
         from peft import LoraConfig, get_peft_model
         # All linear corresponds to qlora https://arxiv.org/pdf/2305.14314 
         lora_config = LoraConfig(
@@ -606,7 +607,7 @@ def run_training(
         processor=processor,
         decoder_start_token_id=model.config.decoder_start_token_id,
     ) 
-    if not use_lora:
+    if not use_lora and not eval_only:
         total_params = 0
         trainable_params = 0
         if distill_whisper:
@@ -748,12 +749,18 @@ def run_training(
     # Training 
     # Only set resume to true if both 1) You want optimization state 2) You are using the same output directory as checkpoint directory
     if eval_only:
-        train_metrics = trainer.evaluate(eval_dataset=train_ds)
-        print("Sentence Level Metrics:")
-        print(train_metrics)
-        val_metrics = trainer.evaluate(eval_dataset=val_ds)
-        print("\nWord Level Metrics:")
-        print(val_metrics)
+        if evaluation == "torgo":
+            train_metrics = trainer.evaluate(eval_dataset=train_ds)
+            print("Sentence Level Metrics:")
+            print(train_metrics)
+            val_metrics = trainer.evaluate(eval_dataset=val_ds)
+            print("\nWord Level Metrics:")
+            print(val_metrics)
+        elif evaluation == "librispeech":
+            val_metrics = trainer.evaluate(eval_dataset=val_ds)
+            print("Librispeech Metrics:")
+            print(val_metrics)
+            pass
         return
     trainer.train(resume_from_checkpoint=False) 
     trainer.save_model(output_dir)
@@ -813,13 +820,13 @@ def main():
     args = parser.parse_args()
     global WINDOW_SIZE
     WINDOW_SIZE = args.local_window_size
-    print(f"Spectral Augmentation window size: {WINDOW_SIZE}")
     # assert(WINDOW_SIZE == 32)
     # model = WhisperForConditionalGeneration.from_pretrained(args.checkpoint)
     # print(model)
     # assert(False)
     processor = WhisperProcessor.from_pretrained(args.model_name, language=args.language, task=args.task)
     eval_on_start = args.eval_only
+    evaluation = "torgo"
     # dataset Deduplication 
     
     if args.phrase_split:
@@ -829,6 +836,7 @@ def main():
     if args.val_librispeech:
         val = get_libri_test(processor.tokenizer)
         eval_on_start = True
+        evaluation = "librispeech"
 
     transform_fn = Compose([
         AddGaussianSNR(min_snr_db=args.augment_snr_db_min, max_snr_db=args.augment_snr_db_max, p=0.5),
@@ -889,6 +897,7 @@ def main():
         checkpoint=checkpoint,
         eval_on_start=eval_on_start,
         eval_only=args.eval_only,
+        evaluation=evaluation
     )
 
 
