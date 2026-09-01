@@ -749,18 +749,18 @@ def run_training(
     # Training 
     # Only set resume to true if both 1) You want optimization state 2) You are using the same output directory as checkpoint directory
     if eval_only:
-        if evaluation == "torgo":
+        split = kwargs.get("word_split", False)
+        if evaluation == "torgo" and split:
             train_metrics = trainer.evaluate(eval_dataset=train_ds)
             print("Sentence Level Metrics:")
             print(train_metrics)
             val_metrics = trainer.evaluate(eval_dataset=val_ds)
             print("\nWord Level Metrics:")
             print(val_metrics)
-        elif evaluation == "librispeech":
+        else:
             val_metrics = trainer.evaluate(eval_dataset=val_ds)
-            print("Librispeech Metrics:")
+            print(f"{evaluation} Metrics:")
             print(val_metrics)
-            pass
         return
     trainer.train(resume_from_checkpoint=False) 
     trainer.save_model(output_dir)
@@ -817,6 +817,7 @@ def main():
     parser.add_argument("--split_indices", type=str, default="results/data_split/split_indices.json", help="Save train/val/test indices.")
     parser.add_argument("--local_window_size", type=int, default=16, help="Size of local sliding window (power of 2)")
     parser.add_argument("--eval_only", action="store_true", help="Sentence and word level evaluation only")
+    parser.add_argument("--word_split", action="store_true", help="Separate TORGO evaluation into word and sentence-level metrics")
     args = parser.parse_args()
     global WINDOW_SIZE
     WINDOW_SIZE = args.local_window_size
@@ -897,7 +898,8 @@ def main():
         checkpoint=checkpoint,
         eval_on_start=eval_on_start,
         eval_only=args.eval_only,
-        evaluation=evaluation
+        evaluation=evaluation,
+        word_split=args.word_split
     )
 
 
