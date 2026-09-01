@@ -833,7 +833,7 @@ def main():
     if args.phrase_split:
         train, val = partition_torgo_on_phrase(processor.tokenizer, val_count=8)
     else:
-        train, val = get_torgo(args.loso_val_speaker, args.loso_test_speaker, processor.tokenizer, evaluate=args.eval_only)
+        train, val = get_torgo(args.loso_val_speaker, args.loso_test_speaker, processor.tokenizer, word_level=args.word_split)
     if args.val_librispeech:
         val = get_libri_test(processor.tokenizer)
         eval_on_start = True

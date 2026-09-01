@@ -5,7 +5,7 @@ import polars as pl
 from datasets import Dataset, DatasetDict, load_dataset
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
 
-def get_torgo(val_speaker, test_speaker, tokenizer, evaluate=False):
+def get_torgo(val_speaker, test_speaker, tokenizer, word_level=False):
     dataset = load_dataset("extraordinarylab/torgo")["test"]
     if len(dataset.cache_files) > 32: 
         dataset.cleanup_cache_files() # Only cleans up parquet and not downloads 
@@ -25,7 +25,7 @@ def get_torgo(val_speaker, test_speaker, tokenizer, evaluate=False):
                 ["audio", "speech_status", "microphone", "length"])
     
     dataset = convert(dataset)
-    if evaluate:
+    if word_level:
         # Break validation set into sentence-level and word-level
         validation = df.filter(pl.col(speaker_column) == val_speaker)
         val_word = validation.filter(pl.col("words") <= 1)
